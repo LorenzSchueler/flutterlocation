@@ -82,8 +82,7 @@ public class DefaultLocationProvider extends LocationProvider
             if (isGPSProviderEnabled()) {
                 onGPSActivated();
             } else {
-                LogUtils.logI("User didn't activate GPS, so continue with Network Provider");
-                getLocationByNetwork();
+                onLocationFailed(FailType.PERMISSION_DENIED);
             }
         }
     }
@@ -102,8 +101,7 @@ public class DefaultLocationProvider extends LocationProvider
                 LogUtils.logI("GPS is not enabled, asking user to enable it...");
                 askForEnableGPS();
             } else {
-                LogUtils.logI("GPS is not enabled, moving on with Network...");
-                getLocationByNetwork();
+                onLocationFailed(FailType.PERMISSION_DENIED);
             }
         }
     }
@@ -121,18 +119,7 @@ public class DefaultLocationProvider extends LocationProvider
         askForLocation(LocationManager.GPS_PROVIDER);
     }
 
-    void getLocationByNetwork() {
-        if (isNetworkProviderEnabled()) {
-            LogUtils.logI("Network is enabled, getting location...");
-            askForLocation(LocationManager.NETWORK_PROVIDER);
-        } else {
-            LogUtils.logI("Network is not enabled, calling fail...");
-            onLocationFailed(FailType.NETWORK_NOT_AVAILABLE);
-        }
-    }
-
     void askForLocation(String provider) {
-        getSourceProvider().getProviderSwitchTask().stop();
         setCurrentProvider(provider);
 
         boolean locationIsAlreadyAvailable = checkForLastKnowLocation();
@@ -140,10 +127,6 @@ public class DefaultLocationProvider extends LocationProvider
         if (getConfiguration().keepTracking() || !locationIsAlreadyAvailable) {
             LogUtils.logI("Ask for location update...");
             notifyProcessChange();
-
-            if (!locationIsAlreadyAvailable) {
-                getSourceProvider().getProviderSwitchTask().delayed(getWaitPeriod());
-            }
 
             requestUpdateLocation();
         } else {
@@ -162,9 +145,8 @@ public class DefaultLocationProvider extends LocationProvider
             return true;
         } else {
             LogUtils.logI("LastKnowLocation is not usable.");
+            return false;
         }
-
-        return false;
     }
 
     void setCurrentProvider(String provider) {
@@ -183,12 +165,6 @@ public class DefaultLocationProvider extends LocationProvider
         long timeInterval = getConfiguration().defaultProviderConfiguration().requiredTimeInterval();
         long distanceInterval = getConfiguration().defaultProviderConfiguration().requiredDistanceInterval();
         getSourceProvider().getUpdateRequest().run(provider, timeInterval, distanceInterval);
-    }
-
-    long getWaitPeriod() {
-        return LocationManager.GPS_PROVIDER.equals(provider)
-                ? getConfiguration().defaultProviderConfiguration().gpsWaitPeriod()
-                : getConfiguration().defaultProviderConfiguration().networkWaitPeriod();
     }
 
     public boolean isNetworkProviderEnabled() {
@@ -220,12 +196,6 @@ public class DefaultLocationProvider extends LocationProvider
         }
 
         onLocationReceived(location);
-
-        // Remove cancelLocationTask because we have already find location,
-        // no need to switch or call fail
-        if (!getSourceProvider().switchTaskIsRemoved()) {
-            getSourceProvider().getProviderSwitchTask().stop();
-        }
 
         if (!getConfiguration().keepTracking()) {
             getSourceProvider().getUpdateRequest().release();
@@ -262,17 +232,7 @@ public class DefaultLocationProvider extends LocationProvider
 
     @Override
     public void runScheduledTask(@NonNull String taskId) {
-        if (taskId.equals(com.lyokone.location.location.providers.locationprovider.DefaultLocationSource.PROVIDER_SWITCH_TASK)) {
-            getSourceProvider().getUpdateRequest().release();
-
-            if (LocationManager.GPS_PROVIDER.equals(provider)) {
-                LogUtils.logI("We waited enough for GPS, switching to Network provider...");
-                getLocationByNetwork();
-            } else {
-                LogUtils.logI("Network Provider is not provide location in required period, calling fail...");
-                onLocationFailed(FailType.TIMEOUT);
-            }
-        }
+        // never switch provider or timeout; ignore task
     }
 
     @Override
@@ -286,8 +246,8 @@ public class DefaultLocationProvider extends LocationProvider
 
     @Override
     public void onNegativeButtonClick() {
-        LogUtils.logI("User didn't want to enable GPS, so continue with Network Provider");
-        getLocationByNetwork();
+        LogUtils.logI("User did not enable GPS");
+        onLocationFailed(FailType.PERMISSION_DENIED);
     }
 
     // For test purposes
